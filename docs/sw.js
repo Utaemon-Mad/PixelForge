@@ -1,6 +1,6 @@
 // Service worker: guarda la app en caché para que funcione sin conexión.
-const CACHE = 'pixelforge-v1';
-const FILES = ['./', 'index.html', 'app.js', 'gen.js', 'gif.js', 'manifest.webmanifest',
+const CACHE = 'pixelforge-v2';
+const FILES = ['./', 'index.html', 'app.js', 'gen.js', 'gif.js', 'tools.js', 'ai.js', 'manifest.webmanifest',
   'icon-192.png', 'icon-512.png', 'apple-touch-icon.png'];
 
 self.addEventListener('install', e => {
@@ -16,7 +16,7 @@ self.addEventListener('activate', e => {
 // Red primero (para recibir actualizaciones), caché si no hay conexión.
 self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
-  e.respondWith(fetch(e.request)
+  e.respondWith(fetch(e.request, { cache: 'no-cache' })
     .then(res => {
       const copy = res.clone();
       caches.open(CACHE).then(c => c.put(e.request, copy));

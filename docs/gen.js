@@ -1,9 +1,11 @@
 // Generadores procedurales de pixel art (versión web de escritorio/generadores.py).
-// Cada generador devuelve una cuadrícula 32x32 de "#rrggbb" o null (transparente).
+// Los diseños están en unidades de 32x32; con size=64 se dibujan a doble resolución
+// (curvas más suaves, contorno de 1 px y más detalle), no simplemente ampliados.
+// Cada generador devuelve una cuadrícula size x size de "#rrggbb" o null (transparente).
 'use strict';
 
 const Gen = (() => {
-  const S = 32;
+  const U = 32; // tamaño de diseño
 
   // ------------------------------------------------------------ azar ----
   class Rand {
@@ -75,58 +77,92 @@ const Gen = (() => {
   }
 
   // ---------------------------------------------------------- boceto ----
+  // Coordenadas en unidades de diseño (0..32); internamente se pinta a S x S.
   class Sketch {
-    constructor() { this.m = Array.from({ length: S }, () => Array(S).fill(null)); }
-    get(x, y) { return x >= 0 && x < S && y >= 0 && y < S ? this.m[y][x] : null; }
+    constructor(S = U) {
+      this.S = S;
+      this.k = S / U;
+      this.m = Array.from({ length: S }, () => Array(S).fill(null));
+    }
+    px(X, Y, mat) { if (X >= 0 && X < this.S && Y >= 0 && Y < this.S) this.m[Y][X] = mat; }
+    get(x, y) {
+      const X = Math.trunc(x * this.k), Y = Math.trunc(y * this.k);
+      return x >= 0 && y >= 0 && X < this.S && Y < this.S ? this.m[Y][X] : null;
+    }
     set(x, y, mat) {
       x = Math.trunc(x); y = Math.trunc(y);
-      if (x >= 0 && x < S && y >= 0 && y < S) this.m[y][x] = mat;
+      for (let dy = 0; dy < this.k; dy++)
+        for (let dx = 0; dx < this.k; dx++) this.px(x * this.k + dx, y * this.k + dy, mat);
     }
     rect(x0, y0, x1, y1, mat, sym = false) {
       for (let y = Math.trunc(Math.min(y0, y1)); y <= Math.trunc(Math.max(y0, y1)); y++)
         for (let x = Math.trunc(Math.min(x0, x1)); x <= Math.trunc(Math.max(x0, x1)); x++) {
           this.set(x, y, mat);
-          if (sym) this.set(S - 1 - x, y, mat);
+          if (sym) this.set(U - 1 - x, y, mat);
         }
+    }
+    // recorre los píxeles finales con su posición en unidades de diseño
+    each(fn) {
+      for (let Y = 0; Y < this.S; Y++)
+        for (let X = 0; X < this.S; X++) fn((X + 0.5) / this.k - 0.5, (Y + 0.5) / this.k - 0.5, X, Y);
     }
     ellipse(cx, cy, rx, ry, mat, cond = null) {
-      for (let y = 0; y < S; y++)
-        for (let x = 0; x < S; x++)
-          if (((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 <= 1 && (!cond || cond(x, y))) this.m[y][x] = mat;
+      this.each((u, v, X, Y) => {
+        if (((u - cx) / rx) ** 2 + ((v - cy) / ry) ** 2 <= 1 && (!cond || cond(u, v))) this.m[Y][X] = mat;
+      });
+    }
+    line(x0, y0, x1, y1, mat, width = 1) {
+      const dx = x1 - x0, dy = y1 - y0, len2 = dx * dx + dy * dy || 1;
+      this.each((u, v, X, Y) => {
+        const t = Math.max(0, Math.min(1, ((u - x0) * dx + (v - y0) * dy) / len2));
+        if (Math.hypot(u - x0 - t * dx, v - y0 - t * dy) <= width / 2) this.m[Y][X] = mat;
+      });
+    }
+    smooth(mat) { // redondea las esquinas en escalera al trabajar a más resolución
+      if (this.k < 2) return;
+      const S = this.S, src = this.m.map(r => r.slice());
+      for (let Y = 1; Y < S - 1; Y++)
+        for (let X = 1; X < S - 1; X++) {
+          let n = 0;
+          for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) if (src[Y + j][X + i] === mat) n++;
+          if (src[Y][X] === mat && n < 4) this.m[Y][X] = null;
+          else if (src[Y][X] === null && n >= 6) this.m[Y][X] = mat;
+        }
     }
     render(ramps) {
+      const S = this.S, at = (X, Y) => (X >= 0 && X < S && Y >= 0 && Y < S ? this.m[Y][X] : null);
       const boxes = {};
-      for (let y = 0; y < S; y++)
-        for (let x = 0; x < S; x++) {
-          const m = this.m[y][x];
+      for (let Y = 0; Y < S; Y++)
+        for (let X = 0; X < S; X++) {
+          const m = this.m[Y][X];
           if (m === null) continue;
-          const b = boxes[m] || [y, y];
-          boxes[m] = [Math.min(b[0], y), Math.max(b[1], y)];
+          const b = boxes[m] || [Y, Y];
+          boxes[m] = [Math.min(b[0], Y), Math.max(b[1], Y)];
         }
       const out = Array.from({ length: S }, () => Array(S).fill(null));
-      for (let y = 0; y < S; y++)
-        for (let x = 0; x < S; x++) {
-          const m = this.m[y][x];
+      for (let Y = 0; Y < S; Y++)
+        for (let X = 0; X < S; X++) {
+          const m = this.m[Y][X];
           if (m === null) continue;
           const ramp = ramps[m];
-          if (typeof ramp === 'string') { out[y][x] = ramp; continue; }
-          const up = this.get(x, y - 1) !== m, left = this.get(x - 1, y) !== m;
-          const down = this.get(x, y + 1) !== m, right = this.get(x + 1, y) !== m;
+          if (typeof ramp === 'string') { out[Y][X] = ramp; continue; }
+          const up = at(X, Y - 1) !== m, left = at(X - 1, Y) !== m;
+          const down = at(X, Y + 1) !== m, right = at(X + 1, Y) !== m;
           let idx = 2 + Number(up || left) + Number(up && left) - Number(down || right) - Number(down && right);
           const [y0, y1] = boxes[m];
-          if (idx === 2 && y1 - y0 >= 4 && (y - y0) / (y1 - y0 + 1) > 0.7) idx = 1;
-          out[y][x] = ramp[Math.max(0, Math.min(ramp.length - 1, idx))];
+          if (idx === 2 && y1 - y0 >= 4 && (Y - y0) / (y1 - y0 + 1) > 0.7) idx = 1;
+          out[Y][X] = ramp[Math.max(0, Math.min(ramp.length - 1, idx))];
         }
       // contorno selectivo con el tono más oscuro del material vecino
       const res = out.map(r => r.slice());
-      for (let y = 0; y < S; y++)
-        for (let x = 0; x < S; x++) {
-          if (this.m[y][x] !== null) continue;
-          for (const [nx, ny] of [[x, y + 1], [x, y - 1], [x + 1, y], [x - 1, y]]) {
-            const nm = this.get(nx, ny);
+      for (let Y = 0; Y < S; Y++)
+        for (let X = 0; X < S; X++) {
+          if (this.m[Y][X] !== null) continue;
+          for (const [nx, ny] of [[X, Y + 1], [X, Y - 1], [X + 1, Y], [X - 1, Y]]) {
+            const nm = at(nx, ny);
             if (nm !== null) {
               const ramp = ramps[nm];
-              res[y][x] = blend(typeof ramp === 'string' ? ramp : ramp[0], '#000000', 0.45);
+              res[Y][X] = blend(typeof ramp === 'string' ? ramp : ramp[0], '#000000', 0.45);
               break;
             }
           }
@@ -140,7 +176,7 @@ const Gen = (() => {
   const HAIRS = ['#3b2a1e', '#e8c063', '#a33a2a', '#2b2b3a', '#d8d8e0', '#5a7bd8', '#e070a0', '#6a4a2a'];
   const BOOTS = ['#5a3a22', '#3b2f2f', '#4a4a5a', '#2f3b2a'];
 
-  function personaje(seed, pose = 0) {
+  function personaje(seed, size = U, pose = 0) {
     const r = new Rand(seed);
     const skin = r.choice(SKINS), hair = r.choice(HAIRS);
     const cloth = hsl(r.random(), r.uniform(0.45, 0.75), r.uniform(0.38, 0.55));
@@ -154,7 +190,7 @@ const Gen = (() => {
 
     const oy = pose === 1 || pose === 3 ? -1 : 0;
     const swing = [0, 1, 0, -1][pose];
-    const sk = new Sketch();
+    const sk = new Sketch(size);
     const cy = 3 + ry + oy, tt = cy + ry, hip = tt + th;
 
     const lw = Math.max(3, tw - 1);
@@ -177,6 +213,7 @@ const Gen = (() => {
     for (const x of [15 - ex, 16 + ex]) {
       sk.set(x, cy + 1, 'eye');
       if (rx >= 6) sk.set(x, cy, 'eye');
+      if (sk.k >= 2) sk.px(x * sk.k + (x < 16 ? 1 : 0), (rx >= 6 ? cy : cy + 1) * sk.k, 'eyeh'); // brillo
     }
     if (hat) {
       const yb = Math.trunc(cy - ry * 0.35);
@@ -191,25 +228,25 @@ const Gen = (() => {
     return sk.render({
       skin: makeRamp(skin), hair: makeRamp(hair), cloth: makeRamp(cloth), arm: makeRamp(cloth),
       pants: makeRamp(pants), boots: makeRamp(boots), belt: makeRamp('#4a2f1c'), hat: makeRamp(hatCol),
-      blade: makeRamp('#b8c4d0'), guard: makeRamp('#d8a838'), eye: '#1b1b2a',
+      blade: makeRamp('#b8c4d0'), guard: makeRamp('#d8a838'), eye: '#1b1b2a', eyeh: '#f4f4f8',
     });
   }
 
-  const personajeCaminando = seed => [0, 1, 2, 3].map(p => personaje(seed, p));
+  const personajeCaminando = (seed, size = U) => [0, 1, 2, 3].map(p => personaje(seed, size, p));
 
   // ------------------------------------------------------- criaturas ----
-  function criatura(seed) {
+  function criatura(seed, size = U) {
     const r = new Rand(seed);
-    let alive = Array.from({ length: S }, () => Array(S).fill(false));
+    let alive = Array.from({ length: U }, () => Array(U).fill(false));
     for (let y = 3; y < 29; y++)
       for (let x = 3; x < 16; x++) {
         const dx = (15.5 - x) / 12.5, dy = (y - 16) / 13;
-        if (r.random() < 0.78 - (dx * dx + dy * dy) * 0.65) alive[y][x] = alive[y][S - 1 - x] = true;
+        if (r.random() < 0.78 - (dx * dx + dy * dy) * 0.65) alive[y][x] = alive[y][U - 1 - x] = true;
       }
     for (let it = 0; it < 2; it++) {
-      const nxt = Array.from({ length: S }, () => Array(S).fill(false));
-      for (let y = 1; y < S - 1; y++)
-        for (let x = 1; x < S - 1; x++) {
+      const nxt = Array.from({ length: U }, () => Array(U).fill(false));
+      for (let y = 1; y < U - 1; y++)
+        for (let x = 1; x < U - 1; x++) {
           let n = 0;
           for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) if ((i || j) && alive[y + j][x + i]) n++;
           nxt[y][x] = n >= 5 || (alive[y][x] && n >= 4);
@@ -218,26 +255,27 @@ const Gen = (() => {
     }
     const seen = new Set();
     let best = [];
-    for (let y = 0; y < S; y++)
-      for (let x = 0; x < S; x++) {
-        if (!alive[y][x] || seen.has(y * S + x)) continue;
+    for (let y = 0; y < U; y++)
+      for (let x = 0; x < U; x++) {
+        if (!alive[y][x] || seen.has(y * U + x)) continue;
         const comp = [], stack = [[x, y]];
-        seen.add(y * S + x);
+        seen.add(y * U + x);
         while (stack.length) {
           const [cx, cy] = stack.pop();
           comp.push([cx, cy]);
           for (const [nx, ny] of [[cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]])
-            if (nx >= 0 && nx < S && ny >= 0 && ny < S && alive[ny][nx] && !seen.has(ny * S + nx)) {
-              seen.add(ny * S + nx);
+            if (nx >= 0 && nx < U && ny >= 0 && ny < U && alive[ny][nx] && !seen.has(ny * U + nx)) {
+              seen.add(ny * U + nx);
               stack.push([nx, ny]);
             }
         }
         if (comp.length > best.length) best = comp;
       }
-    if (best.length < 40) return criatura(seed + 7919);
+    if (best.length < 40) return criatura(seed + 7919, size);
 
-    const sk = new Sketch();
+    const sk = new Sketch(size);
     for (const [x, y] of best) sk.set(x, y, 'body');
+    sk.smooth('body');
     const ys = best.map(p => p[1]);
     const top = Math.min(...ys), bottom = Math.max(...ys), mid = (top + bottom) / 2;
     if (r.random() < 0.6)
@@ -248,7 +286,7 @@ const Gen = (() => {
       const n = r.randint(2, 4);
       for (let k = 0; k < n; k++) {
         const [x, y] = r.choice(best);
-        if (x < 13 && sk.get(x, y) === 'body') { sk.set(x, y, 'spot'); sk.set(S - 1 - x, y, 'spot'); }
+        if (x < 13 && sk.get(x, y) === 'body') { sk.set(x, y, 'spot'); sk.set(U - 1 - x, y, 'spot'); }
       }
     }
     const cand = [];
@@ -263,7 +301,7 @@ const Gen = (() => {
       const [x, y] = r.choice(cand);
       sk.rect(x, y, x + 1, y + 1, 'eyew', true);
       sk.set(x + 1, y + 1, 'eye');
-      sk.set(S - 2 - x, y + 1, 'eye');
+      sk.set(U - 2 - x, y + 1, 'eye');
     }
     const h = r.random();
     const body = hsl(h, r.uniform(0.45, 0.7), r.uniform(0.42, 0.55));
@@ -274,8 +312,8 @@ const Gen = (() => {
   }
 
   // --------------------------------------------------------- objetos ----
-  function pocion(seed) {
-    const r = new Rand(seed), sk = new Sketch();
+  function pocion(seed, size = U) {
+    const r = new Rand(seed), sk = new Sketch(size);
     const rad = r.choice([7, 8, 8, 9]), cy = 29 - rad, bodyTop = cy - rad;
     const square = r.random() < 0.3, neckTop = bodyTop - 4;
     sk.rect(14, neckTop, 17, bodyTop + 1, 'glass');
@@ -298,16 +336,15 @@ const Gen = (() => {
     });
   }
 
-  function espada(seed) {
-    const r = new Rand(seed), sk = new Sketch();
+  function espada(seed, size = U) {
+    const r = new Rand(seed), sk = new Sketch(size);
     const length = r.randint(13, 18);
-    for (let i = 0; i < length; i++) {
-      sk.set(9 + i, 22 - i, 'blade');
-      if (i < length - 1) sk.set(10 + i, 22 - i, 'edge');
-    }
-    for (let i = -3; i <= 3; i++) { sk.set(8 + i, 23 + i, 'guard'); sk.set(9 + i, 23 + i, 'guard'); }
-    for (let i = 1; i <= 3; i++) sk.set(8 - i, 23 + i, 'grip');
-    sk.rect(3, 27, 4, 28, 'guard');
+    const tipX = 9 + length - 1, tipY = 22 - length + 1;
+    sk.line(9, 22, tipX, tipY, 'blade', 1.05);
+    sk.line(10, 22, tipX, tipY + 1, 'edge', 1.05);
+    sk.line(5, 20, 11, 26, 'guard', 1.6);
+    sk.line(7, 24, 5, 26, 'grip', 1.2);
+    sk.ellipse(4, 27.5, 1.4, 1.4, 'guard');
     if (r.random() < 0.5) sk.set(8, 23, 'gem');
     const metal = r.choice(['#b8c4d0', '#c8b89a', '#8fd0e0', '#d0a0a0']);
     const guard = r.choice(['#d8a838', '#a0a8b8', '#b04030', '#4a8a4a']);
@@ -317,18 +354,17 @@ const Gen = (() => {
     });
   }
 
-  function gema(seed) {
-    const r = new Rand(seed), sk = new Sketch();
+  function gema(seed, size = U) {
+    const r = new Rand(seed), sk = new Sketch(size);
     const a = r.randint(9, 12), crown = r.randint(4, 6), pav = r.randint(10, 13), cy = 4 + crown;
-    for (let y = 0; y < S; y++)
-      for (let x = 0; x < S; x++) {
-        const dx = Math.abs(x - 15.5);
-        if (y >= cy - crown && y < cy) {
-          if (dx <= a - (cy - y) * 0.8) sk.set(x, y, dx <= a * 0.35 && y < cy - crown / 2 ? 'table' : 'crown');
-        } else if (y >= cy && y <= cy + pav) {
-          if (dx <= a * (1 - (y - cy) / pav)) sk.set(x, y, x < 16 ? 'pav' : 'pav2');
-        }
+    sk.each((x, y, X, Y) => {
+      const dx = Math.abs(x - 15.5);
+      if (y >= cy - crown && y < cy) {
+        if (dx <= a - (cy - y) * 0.8) sk.m[Y][X] = dx <= a * 0.35 && y < cy - crown / 2 ? 'table' : 'crown';
+      } else if (y >= cy && y <= cy + pav) {
+        if (dx <= a * (1 - (y - cy) / pav)) sk.m[Y][X] = x < 15.5 ? 'pav' : 'pav2';
       }
+    });
     sk.set(Math.trunc(15.5 - a * 0.5), cy - 2, 'shine');
     const base = hsl(r.random(), 0.75, 0.5);
     return sk.render({
@@ -337,29 +373,23 @@ const Gen = (() => {
     });
   }
 
-  function escudo(seed) {
-    const r = new Rand(seed), sk = new Sketch();
-    const hw = r.choice([10, 11]), top = 4, taper = r.randint(15, 19), bottom = 28;
+  function escudo(seed, size = U) {
+    const r = new Rand(seed), sk = new Sketch(size);
+    const hw = r.choice([10, 11]), top = 4, taper = r.randint(15, 19), bottom = 28, e = 1 / sk.k;
     const inside = (x, y) => {
       if (y < top || y > bottom) return false;
       const w = y <= taper ? hw : hw * (1 - ((y - taper) / (bottom - taper + 1)) ** 1.4);
       return Math.abs(x - 15.5) <= w;
     };
-    for (let y = 0; y < S; y++)
-      for (let x = 0; x < S; x++)
-        if (inside(x, y)) {
-          const edge = [[1, 0], [-1, 0], [0, 1], [0, -1]].some(([i, j]) => !inside(x + i, y + j));
-          sk.set(x, y, edge ? 'rim' : 'face');
-        }
     const kind = r.choice(['cruz', 'circulo', 'franja']);
-    for (let y = 0; y < S; y++)
-      for (let x = 0; x < S; x++) {
-        if (sk.get(x, y) !== 'face') continue;
-        if ((kind === 'cruz' && ((x >= 14 && x <= 17 && y >= 8 && y <= 24) || (x >= 9 && x <= 22 && y >= 12 && y <= 15))) ||
-            (kind === 'circulo' && (x - 15.5) ** 2 + (y - 14) ** 2 <= 20) ||
-            (kind === 'franja' && Math.abs((x - 4) - (y - 4)) <= 2))
-          sk.set(x, y, 'emblem');
-      }
+    sk.each((x, y, X, Y) => {
+      if (!inside(x, y)) return;
+      if ([[e, 0], [-e, 0], [0, e], [0, -e]].some(([i, j]) => !inside(x + i, y + j))) { sk.m[Y][X] = 'rim'; return; }
+      const emblem = (kind === 'cruz' && ((x >= 14 && x <= 17 && y >= 8 && y <= 24) || (x >= 9 && x <= 22 && y >= 12 && y <= 15))) ||
+        (kind === 'circulo' && (x - 15.5) ** 2 + (y - 14) ** 2 <= 20) ||
+        (kind === 'franja' && Math.abs((x - 4) - (y - 4)) <= 2);
+      sk.m[Y][X] = emblem ? 'emblem' : 'face';
+    });
     return sk.render({
       rim: makeRamp(r.choice(['#a0a8b8', '#d8a838'])), face: makeRamp(hsl(r.random(), 0.6, 0.42)),
       emblem: makeRamp(r.choice(['#f0e0b0', '#e8e8f0', '#d8a838', '#202030'])),
@@ -367,7 +397,7 @@ const Gen = (() => {
   }
 
   const OBJETOS = { 'Poción': pocion, 'Espada': espada, 'Gema': gema, 'Escudo': escudo };
-  const objetoAleatorio = seed => new Rand(seed).choice(Object.values(OBJETOS))(seed);
+  const objetoAleatorio = (seed, size = U) => new Rand(seed).choice(Object.values(OBJETOS))(seed, size);
 
   // ------------------------------------------------------ utilidades ----
   function fit(grid, w, h) {
@@ -399,6 +429,7 @@ const Gen = (() => {
   }
 
   const copy = f => f.map(r => r.slice());
+  const unit = f => Math.max(1, Math.round(Math.min(f.length, f[0].length) / U)); // 1 en 32x32, 2 en 64x64
 
   function bboxRows(f) {
     const rows = [];
@@ -406,13 +437,18 @@ const Gen = (() => {
     return rows.length ? [rows[0], rows[rows.length - 1]] : [0, 0];
   }
 
-  const animFlotar = f => Array.from({ length: 8 }, (_, i) => shifted(f, 0, Math.round(Math.sin(i / 8 * 2 * Math.PI) * -1.4)));
+  const animFlotar = f => Array.from({ length: 8 }, (_, i) =>
+    shifted(f, 0, Math.round(Math.sin(i / 8 * 2 * Math.PI) * -1.4 * unit(f))));
 
-  function animRespirar(f) {
-    const [top, bottom] = bboxRows(f), mid = Math.floor((top + bottom) / 2);
-    const squash = copy(f);
-    for (let y = mid; y > top; y--) squash[y] = f[y - 1].slice();
-    squash[top] = Array(f[0].length).fill(null);
+  function animRespirar(f, box) {
+    const [top, bottom] = box || bboxRows(f), mid = Math.floor((top + bottom) / 2);
+    let squash = copy(f);
+    for (let n = 0; n < unit(f); n++) { // quita una fila por la mitad y baja la parte de arriba
+      const src = squash;
+      squash = copy(src);
+      for (let y = mid; y > top; y--) squash[y] = src[y - 1].slice();
+      squash[top] = Array(f[0].length).fill(null);
+    }
     return [copy(f), copy(f), squash, copy(squash)];
   }
 
@@ -421,7 +457,7 @@ const Gen = (() => {
     return [copy(f), flash, copy(f), copy(f)];
   }
 
-  const animSacudida = f => [0, 1, -1, 1, -1, 0].map(dx => shifted(f, dx, 0));
+  const animSacudida = f => [0, 1, -1, 1, -1, 0].map(dx => shifted(f, dx * unit(f), 0));
 
   const ANIMACIONES = {
     'Flotar (8 frames)': animFlotar,
@@ -432,6 +468,6 @@ const Gen = (() => {
 
   return {
     personaje, personajeCaminando, criatura, OBJETOS, objetoAleatorio, ANIMACIONES,
-    fit, shifted, makeRamp, blend, hexToRgb,
+    fit, shifted, makeRamp, blend, hexToRgb, rgbToHex, bboxRows,
   };
 })();

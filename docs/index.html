@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>PixelForge</title>
-<meta name="description" content="Editor y generador de pixel art con animaciones">
+<meta name="description" content="Editor y generador de pixel art con animaciones, capas e IA">
 <meta name="theme-color" content="#1e1e26">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -16,7 +16,7 @@
 <style>
   :root {
     --bg: #1e1e26; --panel: #262631; --btn: #33334a; --fg: #e6e6ef; --muted: #8a8aa0; --accent: #5b6ee1;
-    --check-a: #3a3a46; --check-b: #30303b;
+    --check-a: #3a3a46; --check-b: #30303b; --danger: #6a2a36;
   }
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html, body { margin: 0; height: 100%; overflow: hidden; }
@@ -26,74 +26,93 @@
     padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
     -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
   }
+  button, select, input, textarea { font: inherit; color: var(--fg); }
   button, select {
-    font: inherit; color: var(--fg); background: var(--btn); border: 0; border-radius: 8px;
-    padding: 8px 10px; touch-action: manipulation; cursor: pointer;
+    background: var(--btn); border: 0; border-radius: 8px; padding: 8px 10px; touch-action: manipulation; cursor: pointer;
   }
   button:active { filter: brightness(1.3); }
   button.on { background: var(--accent); }
+  button:disabled { opacity: .5; }
+  input[type=text], input[type=password], textarea {
+    width: 100%; background: var(--bg); border: 1px solid #44445a; border-radius: 8px; padding: 9px; -webkit-user-select: text; user-select: text;
+  }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
   h3 { margin: 12px 0 6px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
 
   header { display: flex; gap: 6px; padding: 8px; background: var(--panel); align-items: center; overflow-x: auto; }
   header .title { font-weight: 700; margin-right: 6px; white-space: nowrap; }
+  header button { white-space: nowrap; }
   header .spacer { flex: 1; }
   #docName { color: var(--muted); white-space: nowrap; max-width: 30vw; overflow: hidden; text-overflow: ellipsis; }
 
-  main { display: grid; grid-template-columns: 170px 1fr 230px; min-height: 0; }
+  main { display: grid; grid-template-columns: 172px 1fr 236px; min-height: 0; }
   aside { background: var(--panel); padding: 8px 10px; overflow-y: auto; }
   .tools { display: grid; grid-template-columns: 1fr; gap: 4px; }
   .tools button { text-align: left; }
   .row { display: flex; gap: 4px; flex-wrap: wrap; }
-  .row > button { flex: 1; }
+  .row > button { flex: 1; white-space: nowrap; padding-left: 6px; padding-right: 6px; }
   .stack { display: grid; gap: 4px; }
   label.chk { display: flex; align-items: center; gap: 8px; padding: 5px 0; }
-  label.chk input { width: 20px; height: 20px; accent-color: var(--accent); }
+  label.chk input { width: 20px; height: 20px; accent-color: var(--accent); flex: none; }
+  .lbl { font-size: 12px; color: var(--muted); display: block; margin-top: 6px; }
 
   #stage { position: relative; overflow: hidden; touch-action: none; background: var(--bg); }
   #board { position: absolute; left: 50%; top: 50%; }
-  #art, #grid { position: absolute; left: 0; top: 0; image-rendering: pixelated; image-rendering: crisp-edges; }
-  #grid { pointer-events: none; }
+  #art, #grid, #refImg { position: absolute; left: 0; top: 0; }
+  #art { image-rendering: pixelated; image-rendering: crisp-edges; }
+  #grid, #refImg { pointer-events: none; }
+  #refImg { max-width: none; transform-origin: 0 0; }
   #zoomCtl { position: absolute; right: 8px; bottom: 8px; display: flex; gap: 4px; }
   #zoomCtl button { padding: 6px 12px; opacity: .85; }
 
   .colors { display: flex; gap: 8px; align-items: center; }
-  .sw { position: relative; width: 66px; height: 54px; }
+  .sw { position: relative; width: 66px; height: 54px; flex: none; }
   .sw div { position: absolute; width: 40px; height: 34px; border-radius: 6px; border: 2px solid var(--fg); }
   #sw1 { left: 0; top: 0; z-index: 1; }
   #sw2 { left: 22px; top: 18px; border-color: var(--muted); }
   #hex { font: 12px ui-monospace, Consolas, monospace; color: var(--muted); }
-  #palette { display: grid; grid-template-columns: repeat(8, 1fr); gap: 3px; }
-  #palette div { aspect-ratio: 1; border-radius: 4px; border: 2px solid transparent; }
+  #palette, .swatches { display: grid; grid-template-columns: repeat(8, 1fr); gap: 3px; }
+  #palette div, .swatches div { aspect-ratio: 1; border-radius: 4px; border: 2px solid transparent; }
   #palette div.p1 { border-color: var(--fg); }
   #palette div.p2 { border-color: var(--muted); border-style: dashed; }
-  #preview {
-    width: 100%; aspect-ratio: 1; image-rendering: pixelated; border-radius: 8px;
-    background: repeating-conic-gradient(var(--check-a) 0 25%, var(--check-b) 0 50%) 0 0 / 16px 16px;
-  }
+  .checker { background: repeating-conic-gradient(var(--check-a) 0 25%, var(--check-b) 0 50%) 0 0 / 16px 16px; }
+  #preview { width: 100%; aspect-ratio: 1; image-rendering: pixelated; border-radius: 8px; }
+
+  #layers { display: grid; gap: 3px; margin-bottom: 6px; }
+  .layer { display: flex; align-items: center; gap: 6px; background: var(--bg); border-radius: 8px; padding: 3px; }
+  .layer.cur { outline: 2px solid var(--accent); }
+  .layer button { padding: 5px 8px; background: transparent; }
+  .layer span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 6px 0; }
 
   #frameBar { display: flex; gap: 8px; padding: 8px; background: var(--panel); align-items: center; }
   #frameBtns { display: grid; grid-template-columns: repeat(3, auto); gap: 4px; }
   #frames { display: flex; gap: 8px; overflow-x: auto; flex: 1; padding: 4px; }
   #frames .fr { position: relative; flex: none; border-radius: 6px; outline: 3px solid transparent; outline-offset: 1px; }
   #frames .fr.cur { outline-color: var(--accent); }
-  #frames canvas {
-    display: block; width: 64px; height: 64px; image-rendering: pixelated; border-radius: 6px;
-    background: repeating-conic-gradient(var(--check-a) 0 25%, var(--check-b) 0 50%) 0 0 / 8px 8px;
-  }
+  #frames canvas { display: block; width: 64px; height: 64px; image-rendering: pixelated; border-radius: 6px; }
   #frames span { position: absolute; right: 3px; bottom: 1px; font-size: 11px; font-weight: 700; text-shadow: 0 0 3px #000; }
   #status { padding: 4px 10px calc(4px + env(safe-area-inset-bottom)); color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; }
 
-  /* hoja modal (menús) */
+  /* hoja modal (menús y formularios) */
   #sheet { position: fixed; inset: 0; background: #0009; display: none; align-items: center; justify-content: center; z-index: 10; }
   #sheet.open { display: flex; }
-  #sheet .box { background: var(--panel); border-radius: 14px; padding: 14px; width: min(440px, 92vw); max-height: 82dvh; overflow-y: auto; }
-  #sheet h2 { margin: 0 0 10px; font-size: 18px; }
-  #sheet .box > button, #sheet .item button { width: 100%; text-align: left; margin: 3px 0; padding: 12px; }
+  #sheet .box { background: var(--panel); border-radius: 14px; padding: 14px; width: min(480px, 94vw); max-height: 86dvh; overflow-y: auto; }
+  #sheet h2 { margin: 0 0 10px; font-size: 18px; display: flex; justify-content: space-between; align-items: center; }
+  #sheet h2 button { padding: 4px 10px; }
+  #sheet .box > button, #sheet .item button.grow { width: 100%; text-align: left; margin: 3px 0; padding: 12px; }
   #sheet .item { display: flex; gap: 8px; align-items: center; }
-  #sheet .item canvas { width: 48px; height: 48px; image-rendering: pixelated; flex: none; border-radius: 4px; background: var(--check-b); }
+  #sheet .item canvas { width: 48px; height: 48px; image-rendering: pixelated; flex: none; border-radius: 4px; }
   #sheet .item .grow { flex: 1; }
-  #sheet .item button.del { width: auto; background: #6a2a36; }
+  #sheet .item button.del { background: var(--danger); }
   #sheet .note { color: var(--muted); font-size: 13px; margin: 6px 0; }
+  #sheet .error { color: #ff8a8a; font-size: 13px; margin: 6px 0; white-space: pre-wrap; }
+  #sheet .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 8px 0; }
+  #sheet .pair img, #sheet .pair canvas { width: 100%; aspect-ratio: 1; object-fit: contain; border-radius: 8px; image-rendering: pixelated; }
+  #sheet a { color: #9fb0ff; }
+  .chatlog { display: grid; gap: 8px; margin: 8px 0; max-height: 45dvh; overflow-y: auto; }
+  .msg { padding: 8px 10px; border-radius: 10px; white-space: pre-wrap; -webkit-user-select: text; user-select: text; }
+  .msg.user { background: var(--btn); justify-self: end; max-width: 90%; }
+  .msg.model { background: var(--bg); }
 
   /* iPad en vertical / pantallas estrechas */
   @media (max-width: 900px) and (orientation: portrait) {
@@ -101,6 +120,7 @@
     aside { overflow-x: auto; overflow-y: hidden; display: flex; gap: 14px; padding: 6px 8px; }
     aside > section { flex: none; }
     aside h3 { margin-top: 2px; }
+    #left { max-height: 26vh; overflow-y: auto; }
     #left .tools { grid-template-columns: repeat(4, auto); }
     #right { max-height: 34vh; overflow-y: auto; flex-wrap: wrap; }
     #right > section { width: 220px; }
@@ -113,6 +133,7 @@
   <span class="title">🎨 PixelForge</span>
   <button data-menu="archivo">📁 Archivo</button>
   <button data-menu="generar">✨ Generar</button>
+  <button data-menu="ia">🤖 IA</button>
   <button data-menu="animacion">🎞️ Animación</button>
   <button data-menu="exportar">⬇️ Exportar</button>
   <button id="undo">↶</button>
@@ -132,12 +153,21 @@
       <div class="row" id="brushes"></div>
     </section>
     <section>
+      <h3>Selección</h3>
+      <div class="stack">
+        <div class="row"><button id="selCopy">Copiar</button><button id="selCut">Cortar</button></div>
+        <div class="row"><button id="selPaste">Pegar</button><button id="selDelete">Borrar</button></div>
+        <div class="row"><button id="selAll">Todo</button><button id="selNone">Quitar</button></div>
+      </div>
+    </section>
+    <section>
       <h3>Opciones</h3>
       <label class="chk"><input type="checkbox" id="optPen"> Solo lápiz ✍️</label>
       <label class="chk"><input type="checkbox" id="optMirror"> Espejo</label>
       <label class="chk"><input type="checkbox" id="optFill"> Figuras rellenas</label>
       <label class="chk"><input type="checkbox" id="optOnion" checked> Papel cebolla</label>
       <label class="chk"><input type="checkbox" id="optGrid" checked> Cuadrícula</label>
+      <label class="chk"><input type="checkbox" id="optTile"> Mosaico (tileset)</label>
     </section>
     <section>
       <h3>Transformar</h3>
@@ -145,19 +175,19 @@
         <div class="row"><button id="flipH">⇋ Voltear</button><button id="flipV">⇵ Voltear</button></div>
         <div class="row"><button data-shift="-1,0">←</button><button data-shift="0,-1">↑</button><button data-shift="0,1">↓</button><button data-shift="1,0">→</button></div>
         <button id="replace">Reemplazar 1→2</button>
-        <button id="clear">Limpiar frame</button>
+        <button id="clear">Limpiar capa</button>
       </div>
     </section>
     <section class="help">
       <h3>Gestos</h3>
-      <div class="note" style="color:var(--muted);font-size:12px">
+      <div style="color:var(--muted);font-size:12px">
         Lápiz o 1 dedo: pintar<br>2 dedos: mover y zoom<br>Con «Solo lápiz», 1 dedo mueve el lienzo
       </div>
     </section>
   </aside>
 
   <div id="stage">
-    <div id="board"><canvas id="art"></canvas><canvas id="grid"></canvas></div>
+    <div id="board"><canvas id="art"></canvas><img id="refImg" alt="" hidden><canvas id="grid"></canvas></div>
     <div id="zoomCtl"><button id="zoomOut">−</button><button id="zoomFit">⤢</button><button id="zoomIn">+</button></div>
   </div>
 
@@ -183,8 +213,33 @@
       </div>
     </section>
     <section>
+      <h3>Capas</h3>
+      <div id="layers"></div>
+      <div class="stack">
+        <div class="row"><button id="lyAdd">+ Capa</button><button id="lyDup">Duplicar</button><button id="lyDel">🗑</button></div>
+        <div class="row"><button id="lyUp">▲</button><button id="lyDown">▼</button><button id="lyMerge" title="Fusionar con la capa de abajo">Unir ↓</button></div>
+        <span class="lbl">Opacidad de la capa</span>
+        <input type="range" id="lyOpacity" min="0" max="100" value="100">
+      </div>
+    </section>
+    <section>
+      <h3>Foto de calco</h3>
+      <button id="refLoad" style="width:100%">📷 Cargar foto…</button>
+      <div id="refCtl" hidden>
+        <span class="lbl">Transparencia</span>
+        <input type="range" id="refOpacity" min="5" max="100" value="50">
+        <span class="lbl">Tamaño</span>
+        <input type="range" id="refScale" min="10" max="400" value="100">
+        <div class="stack" style="margin-top:6px">
+          <div class="row"><button id="refMove">✋ Mover</button><button id="refFit">Encajar</button></div>
+          <div class="row"><button id="refHide">Ocultar</button><button id="refDel">Quitar</button></div>
+          <button id="refConvert">Convertir a píxeles…</button>
+        </div>
+      </div>
+    </section>
+    <section>
       <h3>Vista previa</h3>
-      <canvas id="preview"></canvas>
+      <canvas id="preview" class="checker"></canvas>
       <div class="row" style="margin-top:6px;align-items:center">
         <button id="play">▶ Reproducir</button>
         <select id="fps"></select>
@@ -204,9 +259,12 @@
 
 <div id="sheet"><div class="box" id="sheetBox"></div></div>
 <input type="file" id="fileInput" accept=".pxf,.json,image/png,image/gif,image/*" hidden>
+<input type="file" id="refInput" accept="image/*" hidden>
 
 <script src="gen.js"></script>
 <script src="gif.js"></script>
+<script src="tools.js"></script>
+<script src="ai.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
